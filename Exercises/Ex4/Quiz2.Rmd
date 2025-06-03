@@ -1,0 +1,33 @@
+---
+title: "Exercise 4"
+author: "Niv Brosh"
+date: "2 6 2024"
+output: pdf_document
+---
+
+
+# Q.3.
+```{r setup, include=FALSE}
+library(ggplot2)
+sigma_sq <- 2 # true sigma squared
+beta <- c(3.155678, -2.967792, 5.6823762, -9.4346238, -3.7229186, 0.8544212, -1.4265823, 10.4009092) # true beta vector
+lambda_seq <- seq(10^{-4},2,length.out = 200) # lambda sequence to try
+lambda_seq_mod <- seq(10^{-4},10^5,length.out = 200) 
+
+ridge_aux_functions <- function(X, Y, lambda, sigma_sq, beta_true){
+  #' @param X is the X data frame/matrix
+  #' @param Y is the Y variable
+  #' @param lambda is the ridge penalty parameter
+  #' @param sigma_sq is the true model sigma squared
+  #' @param beta_true is the true model beta vector
+
+  
+  # TODO: complete the function such that the function return the following
+  # lambda = is the input lambda parameter
+  # mse_ridge = mean squared error in ridge regression
+  # mse_ols = mean squared error in ols regression
+  return(list(lambda = lambda, mse_ridge = mse_beta, mse_ols = ols_mse))
+  
+}
+
+```
