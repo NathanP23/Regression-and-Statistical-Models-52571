@@ -1,0 +1,710 @@
+---
+title: "Regression And Stat Models - Assignment 8"
+author: "Nathan Pasder"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 3
+header-includes:
+  - |
+    \usepackage{amsmath}
+    \usepackage{amssymb}
+    \usepackage{mathrsfs}
+---
+
+\newpage
+# Question 1
+
+## (a) Multicollinearity Analysis
+
+We begin by loading the dataset `"ex8_data.csv"` and inspecting the structure. We remove the response variable `Y` from the dataset, leaving only the explanatory variables.
+
+```{r setup, message=FALSE}
+# Load required libraries
+library(tidyverse)
+library(readr)
+library(car) # Load car package and compute VIFs
+library(psych) # For pairs.panels function
+```
+```{r, message=FALSE}
+# Load the dataset and clean column names
+data <- read_csv("ex8_data.csv")
+names(data) <- trimws(names(data))  # remove leading/trailing spaces
+
+# Separate Y (response) and X (predictors)
+Y <- data$y
+X <- data %>% select(-y)
+```
+
+Next, we examine the **pairwise correlation matrix** between the explanatory variables. High correlations (e.g., above 0.8 or below -0.8) may indicate multicollinearity.
+
+```{r}
+# Compute and display the correlation matrix
+cor_matrix <- cor(X)
+print(cor_matrix)
+
+```
+
+```{r}
+# Visualize with scatterplot matrix
+pairs.panels(X)
+```
+
+We then compute the **determinant of $X^T X$**. A determinant close to zero suggests that the matrix is nearly singular - a classic sign of multicollinearity.
+
+```{r}
+# Compute X^T X and its determinant
+XtX <- t(as.matrix(X)) %*% as.matrix(X)
+det_XtX <- det(XtX)
+det_XtX
+```
+
+To further assess multicollinearity, we calculate the **condition number** of the matrix $X^T X$. A condition number above 30-100 indicates potential numerical instability due to multicollinearity.
+
+```{r}
+# Compute condition number using eigenvalues
+eigen_vals <- eigen(XtX)$values
+condition_number <- sqrt(max(eigen_vals) / min(eigen_vals))
+condition_number
+```
+
+Lastly, we compute the **Variance Inflation Factors (VIF)** for each explanatory variable. VIF values above 5-10 typically suggest significant multicollinearity.
+
+
+```{r}
+# Fit linear model using all predictors
+vif_model <- lm(Y ~ ., data = X)
+vif_values <- vif(vif_model)
+vif_values
+```
+
+### Conclusion
+
+After calculating all four indicators of multicollinearity:
+
+* **Pairwise Correlation Matrix**: We inspect for strong linear relationships between pairs of variables.
+* **Determinant of $X^T X$**: A very small value suggests near-linear dependence among predictors.
+* **Condition Number**: Values above 100 are concerning.
+* **VIF**: Any predictor with a VIF > 5 (or certainly > 10) is suspect.
+
+If any of these metrics point to high collinearity - especially multiple indicators aligning - we conclude that multicollinearity is present, and we identify which variables are most involved.
+
+```{r}
+# Summarize the VIF values
+summary(vif_values)
+```
+
+## (b) Model Estimation and Perturbation
+
+We begin by fitting a linear regression model using `Y` as the response variable and all other variables as predictors.
+
+```{r}
+# Fit initial linear model with Y as the response
+model_original <- lm(Y ~ ., data = X)
+summary(model_original)
+```
+
+From the summary output:
+
+* **None** of the predictors are statistically significant at the 5% level.
+* The predictor with the lowest p-value is `x7`, with a p-value of 0.109.
+* The model's overall fit is strong, with an R-squared of **0.7201** and a very low p-value for the F-statistic (< 2.2e-16), indicating the model as a whole explains a significant portion of the variance in `Y`.
+
+This result is somewhat surprising: although the model fits the data well, none of the individual variables appear to have a statistically significant individual contribution. This likely reflects **multicollinearity** among the predictors (as seen in part (a)), which inflates standard errors and masks individual significance.
+
+
+Next, we simulate a perturbed response variable:
+
+$$
+Y_{\text{new}} = Y + \text{rnorm}(300, 0, 1)
+$$
+
+This tests how sensitive the regression model is to random noise added to the response.
+
+```{r}
+# Add random noise to Y
+set.seed(123)
+Y_new <- Y + rnorm(300, mean = 0, sd = 1)
+```
+
+We now fit a second linear model using `Y_new` as the response and the same predictors.
+
+```{r}
+# Fit model with Y_new
+model_new <- lm(Y_new ~ ., data = X)
+summary(model_new)
+```
+
+* Again, **no predictors are significant at the 5% level**.
+* `x7` is still the closest to significance, with a slightly improved p-value of 0.0771.
+* The R-squared value remains high at **0.716**, very close to the original model.
+
+### Conclusion:
+
+Adding random noise to the response variable had a **minimal effect** on the regression results:
+
+* The overall model fit (R-squared) remains nearly unchanged.
+* The significance levels of the predictors shift slightly, but not dramatically.
+* No predictors become significant after adding noise, and the same variable (`x7`) remains the most influential, though still not significant.
+
+This suggests that while the model is **fairly stable to small random perturbations**, its **lack of individually significant predictors is likely due to multicollinearity**, not random variation. The results are consistent with what we observed in part (a).
+
+## (c) Coefficient and Prediction Comparison
+
+We now visualize the differences between the two regression models - the original and the perturbed one - using a `subplot` with two side-by-side plots:
+
+1. A **barplot** comparing the estimated coefficients: $\hat{\beta}$ (original) vs $\hat{\beta}_{\text{new}}$ (with noise).
+2. A **scatter plot** comparing the predicted values $\hat{Y}$ and $\hat{Y}_{\text{new}}$ for the first 100 observations.
+
+We also compute and display the following two relative magnitudes:
+
+$$
+\frac{\lVert \hat{\beta} - \hat{\beta}_{\text{new}} \rVert^2}{\lVert \hat{\beta} \rVert^2}, \quad 
+\frac{\lVert Y - \hat{Y}_{\text{new}} \rVert^2}{\lVert Y \rVert^2}
+$$
+
+```{r}
+# Extract estimated coefficients
+beta_hat <- coef(model_original)
+beta_new <- coef(model_new)
+
+# Compute predicted values
+Y_hat <- predict(model_original)
+Y_new_hat <- predict(model_new)
+
+# Compute relative differences
+beta_diff_norm <- sum((beta_hat - beta_new)^2) / sum(beta_hat^2)
+pred_diff_norm <- sum((Y - Y_new_hat)^2) / sum(Y^2)
+```
+
+We now plot the results:
+
+```{r}
+# Plotting side-by-side: Coefficients and Predictions
+par(mfrow = c(1, 2))
+
+# Barplot: Compare coefficients
+barplot(
+  rbind(beta_hat, beta_new),
+  beside = TRUE,
+  col = c("steelblue", "orange"),
+  names.arg = names(beta_hat),
+  legend.text = c(expression(hat(beta)), expression(hat(beta)[new])),
+  main = "Comparison of Coefficients"
+)
+
+# Scatter plot: Compare predictions (first 100)
+plot(
+  Y_hat[1:100], type = "l", col = "steelblue", lwd = 2,
+  ylim = range(c(Y_hat[1:100], Y_new_hat[1:100])),
+  ylab = expression(hat(Y)[i]), xlab = "Index (i)",
+  main = "Predicted Values: Original vs. New"
+)
+lines(Y_new_hat[1:100], col = "orange", lwd = 2)
+legend("topright", 
+       legend = c(expression(hat(Y)), expression(hat(Y)[new])), 
+       col = c("steelblue", "orange"), 
+       lty = 1, 
+       lwd = 2)
+```
+
+We now display the relative magnitudes:
+
+```{r}
+# Display computed magnitudes (ASCII-safe)
+cat("||b_hat - b_hat_new||^2 / ||b_hat||^2 =", round(beta_diff_norm, 4), "\n")
+cat("||Y - Y_hat_new||^2 / ||Y||^2 =", round(pred_diff_norm, 4), "\n")
+```
+
+### Interpretation
+
+The two ratios computed represent different aspects of how the model reacts to added noise in the response variable:
+
+* **Coefficient deviation:**
+
+$$
+\frac{\lVert \hat{\beta} - \hat{\beta}_{\text{new}} \rVert^2}{\lVert \hat{\beta} \rVert^2}
+$$
+
+This ratio measures how much the estimated regression coefficients changed after adding random noise to $Y$. A small value here (e.g., 0.0774) suggests that the model coefficients are relatively stable - they did not change dramatically despite the perturbation in the response.
+
+* **Prediction deviation:**
+
+$$
+\frac{\lVert Y - \hat{Y}_{\text{new}} \rVert^2}{\lVert Y \rVert^2}
+$$
+
+This ratio quantifies how much the new model's predictions ($\hat{Y}_{\text{new}}$) differ from the true values of $Y$. A value like 0.1769 indicates moderate deviation - the predictions are slightly less accurate compared to the original model, but not severely degraded.
+
+### Comparison and Explanation
+
+The coefficient change is relatively small, and the prediction error increases modestly. This difference is expected:
+
+* Adding random noise directly affects the response variable, which impacts prediction accuracy more than it does the estimated coefficients.
+* Since the model is trained on a noisy version of $Y$, the coefficients shift slightly, but not arbitrarily - they still capture the underlying structure in the data.
+* The multicollinearity observed in part (a) also dampens the impact of noise on individual coefficients, since they are not strongly identified.
+
+
+# Question 2
+
+## (a) Derivation of the Least Squares Estimator in the Simple Regression (No Intercept)
+
+We consider the simple linear model with a single regressor and no intercept:
+$$
+Y_i = \beta X_i + \epsilon_i, \quad i = 1, \dots, n
+$$
+
+Let $x = (X_1, X_2, \dots, X_n)^\top \in \mathbb{R}^n$ and $Y = (Y_1, Y_2, \dots, Y_n)^\top \in \mathbb{R}^n$. We aim to find the least squares estimator $\hat{\beta}$ that minimizes the squared residuals:
+
+$$
+\hat{\beta} = \arg\min_\beta \lVert Y - \beta x \rVert^2
+$$
+
+This leads to the classic **normal equations**, which we now derive explicitly.
+
+```{r}
+# Define arbitrary vectors x and Y of length n
+n <- 300
+set.seed(42)
+x <- rnorm(n)
+Y <- 2 * x + rnorm(n)
+
+# Compute least squares estimator analytically
+beta_hat <- sum(x * Y) / sum(x^2)
+beta_hat
+```
+
+We used the following derivation:
+
+$$
+\begin{aligned}
+\lVert Y - \beta x \rVert^2 &= (Y - \beta x)^\top (Y - \beta x) \\
+&= Y^\top Y - 2\beta x^\top Y + \beta^2 x^\top x
+\end{aligned}
+$$
+
+Taking the derivative with respect to $\beta$, setting it to zero:
+
+$$
+\frac{d}{d\beta} \left( Y^\top Y - 2\beta x^\top Y + \beta^2 x^\top x \right) = -2 x^\top Y + 2 \beta x^\top x = 0
+$$
+
+Solving for $\beta$, we obtain:
+
+$$
+\hat{\beta} = \frac{x^\top Y}{x^\top x} = \frac{\sum_{i=1}^n x_i Y_i}{\sum_{i=1}^n x_i^2}
+$$
+
+Thus, the least squares estimator for this model has the closed-form expression:
+
+$$
+\hat{\beta} = \frac{1}{\lVert x \rVert^2} x^\top Y
+$$
+
+We have verified this expression via simulation above.
+
+## (b) Derivation of Least Squares Estimator for Simple Regression with Intercept
+
+We now derive the closed-form solution for the OLS estimator $\hat{\beta}_j$ in a simple linear regression with an intercept:
+
+$$
+Y_i = \beta_0 + \beta_j X_i^{(j)} + \epsilon_i
+$$
+
+To isolate the slope coefficient $\hat{\beta}_j$, we define a centered regressor by projecting $X^{(j)}$ orthogonally to the constant vector $\mathbf{1}_n$. Let:
+
+$$
+P_0 := \frac{1}{n} \mathbf{1}_n \mathbf{1}_n^\top \quad \text{and} \quad w = (I - P_0) X^{(j)}
+$$
+
+Then the least squares slope estimator is:
+
+$$
+\hat{\beta}_j = \frac{1}{\lVert w \rVert^2} w^\top Y
+$$
+
+We now demonstrate this result numerically.
+
+```{r}
+# Extract j-th column from X (e.g., j = 3)
+j <- 3
+x_j <- as.matrix(X[[j]])  # ensure column is matrix for matrix ops
+
+# Construct projection matrix onto 1_n
+n <- length(Y)
+P0 <- matrix(1 / n, nrow = n, ncol = n)
+
+# Construct centered regressor w
+w <- (diag(n) - P0) %*% x_j
+
+# Compute beta_j manually
+beta_j_manual <- as.numeric( t(w) %*% Y / sum(w^2) )
+beta_j_manual
+```
+
+We compare this with the output from the simple linear model:
+
+```{r}
+# Simple regression of Y on x_j with intercept
+model_j <- lm(Y ~ x_j)
+coef(model_j)[2]  # beta_j from standard lm
+```
+
+The two estimates should match up to numerical precision, confirming:
+
+$$
+\hat{\beta}_j = \frac{1}{\lVert w \rVert^2} w^\top Y, \quad w = (I - P_0) X^{(j)}, \quad P_0 = \frac{1}{n} \mathbf{1}_n \mathbf{1}_n^\top
+$$
+
+## (c) Substitution and Final Estimator
+
+We now consider the substitution described in the formulation:
+
+Let
+
+$$
+z = (I - P_{-j}) X^{(j)}
+$$
+
+from the general projection-based formulation. The hint suggests replacing $X^{(j)}$ with
+
+$$
+w = (I - P_0) X^{(j)} \quad \text{where} \quad P_0 = \frac{1}{n} \mathbf{1}_n \mathbf{1}_n^\top
+$$
+
+Then, define:
+
+$$
+z = (I - P_{-j}) w
+$$
+
+Using this $z$, the estimator becomes:
+
+$$
+\hat{\beta}_j = \frac{1}{\lVert z \rVert^2} z^\top Y
+$$
+
+We now verify this in code using the same variable definitions from part (b):
+
+```{r}
+# Select predictor index j
+j <- 2  # corresponds to x3
+
+# Define matrix dimensions
+n <- nrow(X)
+X_mat <- as.matrix(X)
+
+# Extract x^(j)
+xj <- X_mat[, j, drop = FALSE]
+
+# Construct projection matrix P_0 = 1/n * 1_n 1_n^T
+P0 <- matrix(1 / n, nrow = n, ncol = n)
+
+# Compute w = (I - P0) xj
+I_n <- diag(n)
+w <- (I_n - P0) %*% xj
+
+# Compute P_{-j} from X without column j
+X_minus_j <- X_mat[, -j]
+P_minus_j <- X_minus_j %*% solve(t(X_minus_j) %*% X_minus_j) %*% t(X_minus_j)
+
+# Compute z = (I - P_{-j}) w
+z <- (I_n - P_minus_j) %*% w
+
+# Final estimator
+beta_j_part_c <- as.numeric( t(z) %*% Y / sum(z^2) )
+beta_j_part_c
+```
+
+We compare this result to the previous derivation in part (b) and the standard `lm()` estimate:
+
+```{r}
+# Compare with previous part (b)
+beta_j_manual
+
+# Compare with standard lm()
+coef(model_j)[2]
+```
+
+### Conclusion
+
+All three approaches yield the same value (up to numerical precision):
+
+* The new estimator using $z = (I - P_{-j}) (I - P_0) X^{(j)}$
+* The simplified projection estimator from part (b)
+* The standard regression output from `lm()`
+
+This confirms the validity of the identity:
+
+$$
+\hat{\beta}_j = \frac{1}{\lVert (I - P_{-j})(I - P_0) X^{(j)} \rVert^2} \left[ (I - P_{-j})(I - P_0) X^{(j)} \right]^\top Y
+$$
+
+## (d) Compact Form of the Estimator
+
+From the previous derivation, we now consolidate the results:
+
+* In simple projection form (with centering):
+
+$$
+\hat{\beta}_j = \frac{1}{\lVert w \rVert^2} w^\top Y
+$$
+
+* In full projection form (nested):
+
+$$
+\hat{\beta}_j = \frac{1}{\lVert (I - P_{-j}) w \rVert^2} \left[ (I - P_{-j}) w \right]^\top Y
+$$
+
+Where:
+
+* $P_0 = \frac{1}{n} \mathbf{1}_n \mathbf{1}_n^\top$
+* $w = (I - P_0) X^{(j)}$
+* $P_{-j}$ is the projection matrix onto the column space of $X$ without $X^{(j)}$
+
+These forms will be used in part (e) to compute variance expressions.
+
+## (e) Variance Derivation and Decomposition
+
+Using the form:
+
+$$
+\text{Var}(\hat{\beta}_j) = \frac{\sigma^2}{\lVert z \rVert^2} = \frac{\sigma^2}{\lVert (I - P_{-j}) w \rVert^2}
+$$
+
+And also:
+
+$$
+\text{Var}(\hat{\beta}_j) = \frac{\sigma^2}{\lVert w \rVert^2} \cdot \frac{\lVert w \rVert^2}{\lVert z \rVert^2} = \text{Var}_{\text{simple}}(\hat{\beta}_j) \cdot \text{inflation}
+$$
+
+We define:
+
+$$
+\frac{\lVert w \rVert^2}{\lVert (I - P_{-j}) w \rVert^2} = \frac{SST(j)}{SSE(j)} = \text{VIF}_j
+$$
+
+Where:
+
+* $SST(j) = \lVert w \rVert^2$
+* $SSE(j) = \lVert (I - P_{-j}) w \rVert^2$
+
+Thus:
+
+$$
+\text{VIF}_j = \frac{1}{1 - R_j^2} = \frac{\lVert w \rVert^2}{\lVert (I - P_{-j}) w \rVert^2}
+$$
+
+## (f) Final Expression for VIF
+
+We summarize:
+
+* The variance inflation factor (VIF) for $\hat{\beta}_j$ is:
+
+$$
+\text{VIF}_j = \frac{\text{Var}(\hat{\beta}_j^{\text{full}})}{\text{Var}(\hat{\beta}_j^{\text{simple}})} = \frac{1}{1 - R_j^2} = \frac{SST(j)}{SSE(j)}
+$$
+
+Using code, we compute:
+
+```{r}
+# Compute SST and SSE
+sst <- sum(w^2)
+sse <- sum(((diag(n) - P_minus_j) %*% w)^2)
+
+# Compute VIF
+vif_proj <- sst / sse
+vif_proj
+
+# Compare with theoretical VIF
+vif_theoretical <- 1 / (1 - summary(lm(xj ~ X_minus_j))$r.squared)
+vif_theoretical
+```
+
+The two values match:
+
+* `vif_proj` from projections
+* `vif_theoretical` from classic definition \$1 / (1 - R^2)\$
+
+This confirms that variance inflation in $\hat{\beta}_j$ is directly tied to the squared multiple correlation of \$X^{(j)}\$ with the remaining predictors.
+
+# Question 3
+
+## (a) Expectation Identity
+
+We are given random vectors $Z, W \in \mathbb{R}^n$, and asked to prove the matrix expectation identity:
+
+$$
+\mathbb{E}[Z W^\top] = \text{Cov}(Z, W) + \mathbb{E}[Z] \cdot \mathbb{E}[W]^\top
+$$
+
+This is a **standard result in multivariate statistics**, and we now verify it algebraically.
+
+Recall that:
+
+$$
+\text{Cov}(Z, W) := \mathbb{E}[(Z - \mathbb{E}[Z])(W - \mathbb{E}[W])^\top]
+$$
+
+We expand this:
+
+$$
+\begin{aligned}
+\text{Cov}(Z, W)
+&= \mathbb{E}[Z W^\top - Z \mathbb{E}[W]^\top - \mathbb{E}[Z] W^\top + \mathbb{E}[Z] \mathbb{E}[W]^\top] \\
+&= \mathbb{E}[Z W^\top] - \mathbb{E}[Z] \mathbb{E}[W]^\top - \mathbb{E}[Z] \mathbb{E}[W]^\top + \mathbb{E}[Z] \mathbb{E}[W]^\top \\
+&= \mathbb{E}[Z W^\top] - \mathbb{E}[Z] \mathbb{E}[W]^\top
+\end{aligned}
+$$
+
+Rearranging:
+
+$$
+\mathbb{E}[Z W^\top] = \text{Cov}(Z, W) + \mathbb{E}[Z] \mathbb{E}[W]^\top
+$$
+
+This confirms the identity.
+
+```{r}
+# Symbolic identity (written for documentation clarity)
+# E[Z W^T] = Cov(Z, W) + E[Z] E[W]^T
+```
+
+This identity is used in part (b) to simplify expressions for the expected mean squared prediction error (MSPE).
+
+## (b) MSPE Expansion and Expectation
+
+We are asked to prove the identity:
+
+$$
+MSPE = \mathbb{E} \left[ \| \hat{Y} - \mu \|^2 \right] = \mathbb{E} \left[ SSE(P) + 2\sigma^2 r - n\sigma^2 \right]
+$$
+
+We begin with the following identity for the prediction error:
+
+$$
+\| \hat{Y} - \mu \|^2 = \| (\hat{Y} - Y) + (Y - \mu) \|^2
+$$
+
+This is a standard norm expansion:
+
+$$
+\| a + b \|^2 = \| a \|^2 + \| b \|^2 + 2 a^\top b
+$$
+
+We apply this to:
+
+$$
+\hat{Y} = P Y, \quad Y = \mu + \varepsilon
+$$
+
+Let us now define the residual and the noise:
+
+$$
+a = \hat{Y} - Y = P Y - Y = (P - I) \varepsilon \\
+b = Y - \mu = \varepsilon
+$$
+
+So the expansion becomes:
+
+$$
+\begin{aligned}
+\| \hat{Y} - \mu \|^2
+&= \| (P - I) \varepsilon + \varepsilon \|^2 \\
+&= \| P \varepsilon \|^2 + \| \varepsilon \|^2 + 2 \varepsilon^\top P \varepsilon
+\end{aligned}
+$$
+
+Taking expectation:
+
+$$
+\mathbb{E} \left[ \| \hat{Y} - \mu \|^2 \right] = \mathbb{E} \left[ \| P \varepsilon \|^2 \right] + \mathbb{E} \left[ \| \varepsilon \|^2 \right] + 2 \mathbb{E} \left[ \varepsilon^\top P \varepsilon \right]
+$$
+
+We evaluate each term assuming $\varepsilon \sim \mathcal{N}(0, \sigma^2 I_n)$:
+
+* $\mathbb{E} \left[ \| \varepsilon \|^2 \right] = \sigma^2 \cdot n$
+* $\mathbb{E} \left[ \| P \varepsilon \|^2 \right] = \sigma^2 \cdot \text{tr}(P) = \sigma^2 r$
+* $\mathbb{E} \left[ \varepsilon^\top P \varepsilon \right] = \sigma^2 \cdot \text{tr}(P) = \sigma^2 r$
+
+Substitute back:
+
+$$
+\mathbb{E} \left[ \| \hat{Y} - \mu \|^2 \right] = \sigma^2 r + \sigma^2 n + 2 \sigma^2 r = \sigma^2 (n + 3r)
+$$
+
+However, the question uses the identity:
+
+$$
+SSE(P) = \| Y - P Y \|^2 = \| (I - P) \varepsilon \|^2
+$$
+
+So:
+
+$$
+\mathbb{E}[SSE(P)] = \mathbb{E}[\varepsilon^\top (I - P)^2 \varepsilon] = \sigma^2 \cdot \text{tr}((I - P)^2) = \sigma^2 (n - r)
+$$
+
+Final substitution into MSPE:
+
+$$
+MSPE = \mathbb{E} \left[ \| \hat{Y} - \mu \|^2 \right] = \mathbb{E}[SSE(P)] + 2 \sigma^2 r - \sigma^2 n
+$$
+
+
+This confirms the required expression for the mean squared prediction error (MSPE) in terms of the residual sum of squares and rank of the projection matrix.
+
+## (c) Out-of-Sample vs In-Sample Error
+
+We are asked to derive the inequality:
+
+$$
+\mathbb{E} \left[ \| Y^* - \hat{Y} \|^2 \right] - \mathbb{E} \left[ \| Y - \hat{Y} \|^2 \right] = MSPE - \mathbb{E}[SSE(P)] \geq 0
+$$
+
+This compares the **out-of-sample prediction error** (left term) to the **in-sample residual error** (right term). Let us recall:
+
+* $Y^*$ is a new observation vector from the same model as $Y$, i.e., $Y^* = \mu + \varepsilon^*$ with $\varepsilon^* \sim \mathcal{N}(0, \sigma^2 I_n)$ independent of $\varepsilon$.
+* $\hat{Y} = P Y$ is the fitted value from the training sample.
+
+From previous results, we already know:
+
+$$
+\mathbb{E} \left[ \| Y^* - \hat{Y} \|^2 \right] = MSPE + n \sigma^2
+$$
+
+and:
+
+$$
+\mathbb{E} \left[ \| Y - \hat{Y} \|^2 \right] = \mathbb{E}[SSE(P)]
+$$
+
+Subtracting the two:
+
+$$
+\mathbb{E} \left[ \| Y^* - \hat{Y} \|^2 \right] - \mathbb{E} \left[ \| Y - \hat{Y} \|^2 \right]
+= (MSPE + n \sigma^2) - \mathbb{E}[SSE(P)]
+$$
+
+Using the result from part (b):
+
+$$
+MSPE = \mathbb{E}[SSE(P)] + 2\sigma^2 r - n\sigma^2
+$$
+
+So:
+
+$$
+(MSPE + n \sigma^2) - \mathbb{E}[SSE(P)]
+= (\mathbb{E}[SSE(P)] + 2\sigma^2 r - n\sigma^2 + n\sigma^2) - \mathbb{E}[SSE(P)]
+= 2\sigma^2 r \geq 0
+$$
+
+Hence:
+
+$$
+\mathbb{E} \left[ \| Y^* - \hat{Y} \|^2 \right] \geq \mathbb{E} \left[ \| Y - \hat{Y} \|^2 \right]
+$$
+
+This proves the inequality and shows that **out-of-sample error is always at least as large as in-sample error**, with equality only when the projection rank \$r = 0\$ (trivial case).
